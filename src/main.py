@@ -1,218 +1,431 @@
 import argparse
+import json
 import logging
 import sys
-import traceback
-from typing import Dict, Any
 from pathlib import Path
 
-# Discovered Repository Modules
-# These imports perfectly match the internal architecture discovered during static analysis.
-from core.config import ConfigManager
-from core.logger import LoggerSetup
-from terrain.pipeline import WorldGenerationPipeline
-from experiment.runner import ExperimentFramework
+import numpy as np
+
+from experiments import ScenarioManager
+from terrain.terrain_types import (
+    FlatTerrain,
+    HillTerrain,
+    MountainTerrain,
+    ValleyTerrain,
+    RoughTerrain,
+)
+from terrain.terrain_composer import TerrainComposer
+from terrain.heightmap_exporter import HeightmapExporter
+from noise.noise_factory import NoiseFactory
+from obstacles.rock_field_generator import RockFieldGenerator
+from obstacles.forest_cluster_generator import ForestClusterGenerator
+from obstacles.barrier_wall_generator import BarrierWallGenerator
+from obstacles.dead_end_generator import DeadEndGenerator
+from obstacles.narrow_passage_generator import NarrowPassageGenerator
+from gazebo.world_builder import WorldBuilder
+from gazebo.world_exporter import GazeboWorldExporter
+from metrics.terrain_difficulty_analyzer import TerrainDifficultyAnalyzer
+from obstacles.sdf_exporter import SDFObstacleExporter
 
 
 def parse_arguments() -> argparse.Namespace:
     """
-    Parses command-line arguments required for pipeline execution.
+    Parse command-line arguments for world generation.
 
     Returns:
-        argparse.Namespace: The strictly typed parsed command-line arguments.
+        argparse.Namespace: Parsed arguments
     """
     parser = argparse.ArgumentParser(
-        description="Master Orchestrator for Procedural Terrain Generation and Autonomous Exploration Benchmarking."
+        description="Procedural Terrain & Obstacle Generation for Autonomous Exploration"
     )
+
     parser.add_argument(
-        "--config",
+        "--scenario",
         type=str,
-        required=True,
-        help="Absolute or relative path to the primary configuration YAML/JSON file."
+        default="medium",
+        choices=["easy", "medium", "hard", "extreme"],
+        help="Difficulty scenario (default: medium)",
     )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility (default: 42)",
+    )
+
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./output",
-        help="Directory where generated heightmaps, Gazebo worlds, and benchmarking JSONs will be serialized."
+        default="./generated",
+        help="Output directory for generated files (default: ./generated)",
     )
+
+    parser.add_argument(
+        "--heightmap_size",
+        type=int,
+        default=256,
+        help="Heightmap resolution (default: 256x256)",
+    )
+
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Elevate logging level to DEBUG for exhaustive pipeline tracing."
+        help="Enable verbose logging",
     )
+
     return parser.parse_args()
 
 
-def validate_configuration(config: Dict[str, Any], config_path: str) -> None:
+def setup_logging(verbose: bool) -> logging.Logger:
     """
-    Validates that the loaded configuration dictionary contains the minimal 
-    required top-level keys before initiating computationally expensive tasks.
+    Initialize logging infrastructure.
 
     Args:
-        config (Dict[str, Any]): The deserialized configuration dictionary.
-        config_path (str): The path to the configuration file, utilized for precise error reporting.
+        verbose: If True, set level to DEBUG
 
-    Raises:
-        ValueError: If critically essential configuration keys are entirely absent.
+    Returns:
+        logging.Logger: Configured logger
     """
-    required_top_level_keys = ["terrain_settings", "experiment_settings", "robot_parameters"]
-    missing_keys = [key for key in required_top_level_keys if key not in config]
-    
-    if missing_keys:
-        raise ValueError(
-            f"Configuration validation failed. File at '{config_path}' is invalid. "
-            f"Missing required top-level architecture keys: {missing_keys}"
-        )
+    level = logging.DEBUG if verbose else logging.INFO
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    return logging.getLogger(__name__)
 
 
-def execute_world_generation(
-    pipeline: WorldGenerationPipeline, 
-    output_dir: Path
+def instantiate_terrain_generators(size: int) -> list:
+    """
+    Create terrain generator instances.
+
+    Args:
+        size: Heightmap size
+
+    Returns:
+        list: Terrain generator instances
+    """
+    generators = [
+        HillTerrain(size=size, hill_height=15.0),
+        ValleyTerrain(size=size, depth=15.0),
+    ]
+
+    return generators
+
+
+def generate_terrain(
+    logger: logging.Logger, scenario_name: str, heightmap_size: int, seed: int
+) -> np.ndarray:
+    """
+    Generate procedural terrain for the scenario.
+
+    Execution sequence:
+    1. Load scenario configuration
+    2. Compose base terrain from multiple generators
+    3. Apply noise (Perlin/FBM/Ridged)
+    4. Return blended heightmap
+
+    Args:
+        logger: Logger instance
+        scenario_name: Scenario name (easy|medium|hard|extreme)
+        heightmap_size: Heightmap resolution
+        seed: Random seed
+
+    Returns:
+        np.ndarray: Composed and noisy heightmap
+    """
+    logger.info(f"Generating terrain for scenario: {scenario_name}")
+
+    # Set seed
+    np.random.seed(seed)
+
+    # Load scenario
+    scenario_manager = ScenarioManager()
+    scenario = scenario_manager.get(scenario_name)
+    logger.info(
+        f"Scenario: {scenario.name} | Noise: {scenario.noise_type} | "
+        f"Difficulty: {scenario.target_difficulty}"
+    )
+
+    # Compose terrain
+    logger.info("Composing terrain generators...")
+    composer = TerrainComposer(normalize=True, smoothing=False)
+
+    terrain_generators = instantiate_terrain_generators(heightmap_size)
+    for gen in terrain_generators:
+        composer.add_generator(gen, weight=1.0)
+
+    composed_terrain = composer.compose()
+    logger.info(f"Composed terrain shape: {composed_terrain.shape}")
+
+    # Generate noise
+    logger.info(f"Generating {scenario.noise_type} noise...")
+    noise_generator = NoiseFactory.create(
+        scenario.noise_type,
+        scale=scenario.noise_scale,
+        octaves=scenario.octaves,
+        persistence=scenario.persistence,
+        lacunarity=scenario.lacunarity,
+        seed=seed,
+    )
+
+    noise_array = noise_generator.generate(size=heightmap_size)
+    logger.info(f"Noise shape: {noise_array.shape}")
+
+    # Blend terrain and noise
+    heightmap = composed_terrain + (noise_array * 0.3)
+
+    logger.info(f"Final heightmap range: [{heightmap.min():.2f}, {heightmap.max():.2f}]")
+
+    return heightmap
+
+
+def generate_obstacles(
+    logger: logging.Logger, heightmap: np.ndarray, scenario_name: str
+) -> list:
+    """
+    Generate obstacles using rejection sampling.
+
+    Args:
+        logger: Logger instance
+        heightmap: Terrain heightmap
+        scenario_name: Scenario name (for obstacle selection)
+
+    Returns:
+        list: List of Obstacle objects
+    """
+    logger.info(f"Generating obstacles for {scenario_name} scenario...")
+
+    # Compute slope map
+    gradient_y, gradient_x = np.gradient(heightmap)
+    slope_map = np.sqrt(gradient_x**2 + gradient_y**2)
+
+    rows, cols = heightmap.shape
+    spawn = (5.0, 5.0)
+    goal = (cols - 5.0, rows - 5.0)
+
+    # Instantiate generators based on scenario
+    generators = []
+
+    if scenario_name in ["easy", "medium", "hard", "extreme"]:
+        generators.append(RockFieldGenerator(rock_count=50))
+
+    if scenario_name in ["medium", "hard", "extreme"]:
+        generators.append(ForestClusterGenerator(cluster_count=3))
+
+    if scenario_name in ["hard", "extreme"]:
+        generators.append(BarrierWallGenerator(wall_length=25.0))
+
+    if scenario_name == "extreme":
+        generators.append(DeadEndGenerator(dead_end_count=2))
+        generators.append(NarrowPassageGenerator(passage_count=2))
+
+    # Generate obstacles
+    all_obstacles = []
+    for generator in generators:
+        logger.info(f"  - {generator.__class__.__name__}...")
+        obstacles = generator.generate(heightmap, slope_map, spawn, goal)
+        all_obstacles.extend(obstacles)
+        logger.info(f"    Generated {len(obstacles)} obstacles")
+
+    logger.info(f"Total obstacles: {len(all_obstacles)}")
+
+    return all_obstacles
+
+
+def analyze_terrain(
+    logger: logging.Logger, heightmap: np.ndarray, obstacles: list
+) -> dict:
+    """
+    Analyze terrain difficulty.
+
+    Args:
+        logger: Logger instance
+        heightmap: Terrain heightmap
+        obstacles: List of Obstacle objects
+
+    Returns:
+        dict: Difficulty analysis results
+    """
+    logger.info("Analyzing terrain difficulty...")
+
+    analyzer = TerrainDifficultyAnalyzer()
+
+    # Build obstacle layout
+    obstacle_layout = np.zeros(heightmap.shape, dtype=np.uint8)
+    for obstacle in obstacles:
+        x = int(obstacle.x)
+        y = int(obstacle.y)
+        if 0 <= x < heightmap.shape[1] and 0 <= y < heightmap.shape[0]:
+            obstacle_layout[y, x] = 1
+
+    # Analyze
+    result = analyzer.analyze(heightmap, obstacle_layout)
+
+    logger.info(f"  - Average slope: {result.average_slope:.2f}°")
+    logger.info(f"  - Max slope: {result.maximum_slope:.2f}°")
+    logger.info(f"  - Surface roughness: {result.surface_roughness:.2f}")
+    logger.info(f"  - Obstacle density: {result.obstacle_density:.2%}")
+    logger.info(f"  - Traversability: {result.traversability_score:.1f}%")
+    logger.info(f"  - Difficulty score: {result.difficulty_score:.1f}/100 ({result.category})")
+
+    return {
+        "average_slope": result.average_slope,
+        "maximum_slope": result.maximum_slope,
+        "surface_roughness": result.surface_roughness,
+        "obstacle_density": result.obstacle_density,
+        "traversability_score": result.traversability_score,
+        "difficulty_score": result.difficulty_score,
+        "category": result.category,
+    }
+
+
+def export_heightmap(
+    logger: logging.Logger, heightmap: np.ndarray, output_dir: Path
 ) -> None:
     """
-    Executes the procedural world generation sequence in the mathematically required order.
-    Deviation from this execution order will result in topological anomalies.
+    Export heightmap to PNG, NPY, and CSV.
 
     Args:
-        pipeline (WorldGenerationPipeline): The successfully initialized generation pipeline instance.
-        output_dir (Path): The validated directory path for exporting simulation artifacts.
+        logger: Logger instance
+        heightmap: Terrain heightmap
+        output_dir: Output directory
     """
-    logger = logging.getLogger(__name__)
+    logger.info(f"Exporting heightmap to {output_dir}...")
 
-    logger.info("Initializing overarching structural boundaries (Procedural Terrain)...")
-    pipeline.generate_procedural_terrain()
+    HeightmapExporter.export_all(heightmap, output_dir)
 
-    logger.info("Applying multifractal arrays (Procedural Noise)...")
-    pipeline.generate_procedural_noise()
-
-    logger.info("Applying morphological alterations (Terrain Composition)...")
-    pipeline.compose_terrain()
-
-    logger.info("Executing rejection sampling for entity placement (Generate Obstacles)...")
-    pipeline.generate_obstacles()
-
-    logger.info("Calculating spatial gradients and traversability thresholds (Analyze Difficulty)...")
-    pipeline.analyze_terrain_difficulty()
-
-    heightmap_path = output_dir / "terrain_heightmap.png"
-    logger.info(f"Exporting 2D visual representation to: {heightmap_path}")
-    pipeline.export_heightmap(str(heightmap_path))
-
-    gazebo_world_path = output_dir / "environment.world"
-    logger.info(f"Exporting SDF simulation configuration to: {gazebo_world_path}")
-    pipeline.export_gazebo_world(str(gazebo_world_path))
+    logger.info("  - terrain.png (PNG image)")
+    logger.info("  - terrain.npy (NumPy binary)")
+    logger.info("  - terrain.csv (CSV data)")
 
 
-def execute_experiment_lifecycle(
-    framework: ExperimentFramework, 
-    config: Dict[str, Any], 
-    output_dir: Path
+def export_gazebo_world(
+    logger: logging.Logger,
+    heightmap: np.ndarray,
+    obstacles: list,
+    output_dir: Path,
 ) -> None:
     """
-    Orchestrates the ROS2 autonomous exploration scenario, blocks during execution, 
-    and handles subsequent post-processing data serialization.
+    Export Gazebo SDF world file.
 
     Args:
-        framework (ExperimentFramework): The instantiated experiment framework.
-        config (Dict[str, Any]): The full configuration payload.
-        output_dir (Path): The directory target for benchmarking artifacts.
+        logger: Logger instance
+        heightmap: Terrain heightmap
+        obstacles: List of Obstacle objects
+        output_dir: Output directory
     """
-    logger = logging.getLogger(__name__)
+    logger.info("Building Gazebo world...")
 
-    logger.info("Initializing ROS2 context and DDS networks (Experiment Framework)...")
-    framework.initialize(config)
+    # Build world
+    builder = WorldBuilder()
+    builder.add_obstacles(obstacles)
 
-    logger.info("Spawning agent and executing TSP-based autonomous exploration scenario...")
-    framework.run_scenario()
+    # Export heightmap
+    heightmap_path = output_dir / "terrain.png"
+    HeightmapExporter.export_png(heightmap, heightmap_path)
 
-    logger.info("Simulation halted. Aggregating telemetry and map data (Collect Metrics)...")
-    metrics = framework.collect_metrics()
+    # Export world
+    world_path = output_dir / "environment.world"
+    logger.info(f"Exporting SDF world to {world_path}...")
 
-    benchmark_path = output_dir / "benchmark_results.json"
-    logger.info(f"Serializing mathematical evaluation metrics to: {benchmark_path}")
-    framework.save_benchmark_results(metrics)
+    exporter = GazeboWorldExporter()
+    exporter.export(
+        image_path=str(heightmap_path),
+        world_path=str(world_path),
+        obstacles=obstacles,
+    )
 
-    logger.info("Compiling and broadcasting final execution statistics...")
-    framework.print_summary()
+    logger.info(f"  - {world_path}")
+
+
+def export_metadata(
+    logger: logging.Logger,
+    output_dir: Path,
+    difficulty: dict,
+    obstacles: list,
+    seed: int,
+) -> None:
+    """
+    Export metadata (difficulty info, obstacle count, seed).
+
+    Args:
+        logger: Logger instance
+        output_dir: Output directory
+        difficulty: Difficulty analysis results
+        obstacles: List of obstacles
+        seed: Random seed
+    """
+    logger.info("Exporting metadata...")
+
+    metadata = {
+        "seed": seed,
+        "obstacle_count": len(obstacles),
+        "difficulty": difficulty,
+    }
+
+    metadata_path = output_dir / "metadata.json"
+
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=4)
+
+    logger.info(f"  - {metadata_path}")
 
 
 def main() -> int:
     """
-    The primary execution block and global state machine for the orchestrator.
-    
+    Main orchestration function.
+
+    Execution flow:
+    1. Parse CLI arguments
+    2. Setup logging
+    3. Create output directory
+    4. Generate terrain
+    5. Generate obstacles
+    6. Analyze terrain difficulty
+    7. Export heightmap (PNG/NPY/CSV)
+    8. Export Gazebo world
+    9. Export metadata
+
     Returns:
-        int: Standard POSIX exit code (0 representing successful execution, non-zero representing fatal failure).
+        int: Exit code (0 = success, 1 = failure)
     """
     args = parse_arguments()
-    output_dir = Path(args.output_dir)
-    
+
+    logger = setup_logging(args.verbose)
+
     try:
+        output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        print(f"CRITICAL: IO Failure. Unable to create target output directory {output_dir}: {e}")
-        return 1
+        logger.info(f"Output directory: {output_dir}")
 
-    # ==========================================
-    # Phase 1: Configuration & Logging Bootstrap
-    # ==========================================
-    try:
-        config_manager = ConfigManager()
-        config = config_manager.load_config(args.config)
-        validate_configuration(config, args.config)
-        
-        logger_setup = LoggerSetup()
-        logger_setup.initialize_logging(config)
-        
-        # Override baseline logging if verbose trace is requested
-        if args.verbose:
-            logging.getLogger().setLevel(logging.DEBUG)
-            
-        logger = logging.getLogger(__name__)
-        logger.info("Phase 1 Complete: System configuration loaded and successfully validated.")
-        
+        # Phase 1: Generate terrain
+        heightmap = generate_terrain(logger, args.scenario, args.heightmap_size, args.seed)
+
+        # Phase 2: Generate obstacles
+        obstacles = generate_obstacles(logger, heightmap, args.scenario)
+
+        # Phase 3: Analyze terrain
+        difficulty = analyze_terrain(logger, heightmap, obstacles)
+
+        # Phase 4: Export heightmap
+        export_heightmap(logger, heightmap, output_dir)
+
+        # Phase 5: Export Gazebo world
+        export_gazebo_world(logger, heightmap, obstacles, output_dir)
+
+        # Phase 6: Export metadata
+        export_metadata(logger, output_dir, difficulty, obstacles, args.seed)
+
+        logger.info("✓ World generation completed successfully!")
+
+        return 0
+
     except Exception as e:
-        print(f"CRITICAL SYSTEM ERROR DURING BOOTSTRAP: {e}")
-        traceback.print_exc()
+        logger.error(f"✗ Fatal error: {e}", exc_info=args.verbose)
         return 1
-
-    # Architectural capability verification based on repository state:
-    # This functionality is not implemented in the current repository:
-    # Live, real-time procedural terrain modification or dynamic obstacle regeneration 
-    # during active ROS2 simulation execution.
-
-    # ==========================================
-    # Phase 2: Procedural Terrain Synthesis
-    # ==========================================
-    try:
-        logger.info("Phase 2 Commencing: Initializing World Generation Pipeline...")
-        world_pipeline = WorldGenerationPipeline()
-        world_pipeline.initialize(config)
-        
-        execute_world_generation(world_pipeline, output_dir)
-        logger.info("Phase 2 Complete: World generation and exportation succeeded.")
-        
-    except Exception as e:
-        logger.error(f"FATAL: Unrecoverable mathematical or IO error during world generation: {e}")
-        logger.debug(traceback.format_exc())
-        return 1
-
-    # ==========================================
-    # Phase 3: ROS2 Experiment Execution
-    # ==========================================
-    try:
-        logger.info("Phase 3 Commencing: Bootstrapping Experiment Framework...")
-        experiment_framework = ExperimentFramework()
-        
-        execute_experiment_lifecycle(experiment_framework, config, output_dir)
-        logger.info("Phase 3 Complete: Autonomous exploration testing finalized.")
-        
-    except Exception as e:
-        logger.error(f"FATAL: Simulator crash or ROS2 middleware failure during execution: {e}")
-        logger.debug(traceback.format_exc())
-        return 1
-
-    logger.info("GLOBAL SUCCESS: Autonomous exploration pipeline terminated normally.")
-    return 0
 
 
 if __name__ == "__main__":
