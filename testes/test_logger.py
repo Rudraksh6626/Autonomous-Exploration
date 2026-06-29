@@ -38,7 +38,7 @@ def test_initialize_logging_dir_not_writable(tmp_path, monkeypatch):
     def fake_filehandler(*args, **kwargs):
         raise PermissionError("no write permission")
 
-    monkeypatch.setattr("logging.FileHandler", fake_filehandler)
+    monkeypatch.setattr("logging.handlers.RotatingFileHandler", fake_filehandler)
     ls = LoggerSetup()
     cfg = {"logging": {"level": "INFO", "output_dir": str(log_dir), "file_name": "test.log"}}
     # Should not crash the test runner; the module should handle handler creation errors gracefully.
