@@ -17,8 +17,8 @@ def test_initialize_logging_and_set_level(tmp_path):
     assert logger.getEffectiveLevel() == logging.INFO or logger.level == logging.INFO
 
     # There should be at least one file handler that writes to test.log
-    file_handlers = [h for h in logger.handlers if hasattr(h, "baseFilename")]
-    assert any("test.log" in getattr(h, "baseFilename", "") for h in file_handlers)
+    root_handlers = logging.getLogger().handlers
+    assert any("test.log" in getattr(h, "baseFilename", "") for h in root_handlers if hasattr(h, "baseFilename"))
 
     # Changing level via set_level should affect the logger
     ls.set_level("DEBUG")
