@@ -56,10 +56,23 @@ class ExperimentFramework:
         # import rclpy
         # rclpy.init()
 
-    def run_scenario(self) -> None:
+    def run_scenario(
+        self,
+        obstacle_generators=None,
+        noise_generator=None,
+        gazebo_exporter=None,
+    ) -> None:
         """
         Execute the autonomous exploration scenario.
         Spawns the robot agent and runs the exploration task.
+
+        Optional DI parameters:
+          - obstacle_generators: list-like of obstacle generator instances to use
+          - noise_generator: a noise generator instance (must have generate(size=...) method)
+          - gazebo_exporter: exporter instance with export(image_path, world_path, obstacles)
+
+        If any parameter is None, the method will fall back to configuration or to
+        the framework's default behavior so existing callers remain unchanged.
         """
         if not self.is_initialized:
             raise RuntimeError("Framework must be initialized before running scenario")
@@ -73,10 +86,29 @@ class ExperimentFramework:
         self.logger.info(f"Scenario type: {scenario_type}")
         self.logger.info(f"Maximum duration: {max_duration}s")
         
+        # Resolve dependencies: prefer injected, otherwise look into config or create defaults
+        if obstacle_generators is None:
+            obstacle_generators = self.config.get('terrain_settings', {}).get('obstacle_generators')
+        if noise_generator is None:
+            noise_generator = self.config.get('terrain_settings', {}).get('noise_generator')
+        # gazebo_exporter left as None to allow lower-level pipeline to instantiate the default exporter
+
         # Placeholder for actual scenario execution
         self.logger.info("Spawning autonomous agent and executing exploration task")
-        
-        # This would contain actual ROS2 node creation and execution:
+
+        # Example (commented) of using the world generation pipeline without changing public API:
+        # from core.world_generation_pipeline import WorldGenerationPipeline
+        # pipeline = WorldGenerationPipeline(
+        #     terrain_generators=self.config.get('terrain_settings', {}).get('terrain_generators', []),
+        #     noise_generator=noise_generator,
+        #     obstacle_generators=obstacle_generators,
+        #     output_directory=self.config.get('terrain_settings', {}).get('output_directory', './output'),
+        #     seed=self.config.get('terrain_settings', {}).get('seed', 42),
+        #     gazebo_exporter=gazebo_exporter
+        # )
+        # pipeline.generate()
+
+        # This remains a placeholder for actual ROS2 node creation and execution:
         # self._spawn_robot_agent()
         # self._execute_exploration_loop()
 
