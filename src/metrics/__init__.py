@@ -49,6 +49,10 @@ from .summary_statistics import (
     SummaryStatistics,
 )
 
+from .terrain_difficulty_analyzer import (
+    TerrainDifficultyAnalyzer,
+)
+
 __all__ = [
 
     # Exploration
@@ -74,6 +78,7 @@ __all__ = [
     # Reports
     "ReportGenerator",
     "SummaryStatistics",
+    "TerrainDifficultyAnalyzer",
 
     # Schemas
     "ExperimentMetrics",

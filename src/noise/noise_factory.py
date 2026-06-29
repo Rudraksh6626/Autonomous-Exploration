@@ -1,6 +1,6 @@
-from noise.perlin_noise import PerlinNoiseGenerator
-from noise.simplex_noise import SimplexNoiseGenerator
-from noise.fractal_noise import FractalNoiseGenerator
+from .perlin_noise import PerlinNoiseGenerator
+from .simplex_noise import SimplexNoiseGenerator
+from .fractal_noise import FractalNoiseGenerator
 
 
 class NoiseFactory:

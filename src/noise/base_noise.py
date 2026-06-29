@@ -1,5 +1,5 @@
 from abc import ABC
-from noise_generator import NoiseGenerator
+from .noise_generator import NoiseGenerator
 
 
 class BaseNoiseGenerator(NoiseGenerator, ABC):

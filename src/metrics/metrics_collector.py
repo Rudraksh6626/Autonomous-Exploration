@@ -11,7 +11,7 @@ simulation is running.
 from __future__ import annotations
 
 import time
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -19,7 +19,6 @@ from .exploration_metrics import compute_all_metrics
 from .mapping_metrics import MappingMetricsCalculator
 from .metrics_schema import (
     ExperimentMetrics,
-    ExplorationMetrics,
     MappingMetrics,
 )
 

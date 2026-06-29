@@ -1,3 +1,1 @@
-from .world_generation_pipeline import (
-    WorldGenerationPipeline
-)
+from .world_generation_pipeline import WorldGenerationPipeline as WorldGenerationPipeline
