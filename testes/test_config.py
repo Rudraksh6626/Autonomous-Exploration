@@ -40,8 +40,9 @@ def test_load_json_and_missing_keys(tmp_path):
     from core.config import ConfigManager
     cm = ConfigManager()
     cfg = cm.load_config(str(p))
-    # validate should return False if required missing (per docs validate returns bool)
-    assert cm.validate(["terrain_settings", "experiment_settings", "robot_parameters"]) is False
+    # validate raises ValueError when required keys are missing
+with pytest.raises(ValueError):
+    cm.validate(["terrain_settings", "experiment_settings", "robot_parameters"])
 
 def test_load_nonexistent_file_raises(tmp_path):
     from core.config import ConfigManager
