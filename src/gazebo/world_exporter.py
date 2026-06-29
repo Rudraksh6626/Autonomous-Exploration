@@ -35,6 +35,10 @@ class GazeboWorldExporter:
         obstacles
     ):
 
+        # Ensure the heightmap path is a file:// URI and absolute so Gazebo can resolve it
+        img_path = Path(image_path).absolute()
+        img_uri = f"file://{img_path.as_posix()}"
+
         obstacle_xml = "\n".join(
             self._build_obstacle(obstacle)
             for obstacle in obstacles
@@ -65,7 +69,7 @@ class GazeboWorldExporter:
 
                         <heightmap>
 
-                            <uri>{image_path}</uri>
+                            <uri>{img_uri}</uri>
 
                             <size>100 100 20</size>
 
@@ -81,7 +85,7 @@ class GazeboWorldExporter:
 
                         <heightmap>
 
-                            <uri>{image_path}</uri>
+                            <uri>{img_uri}</uri>
 
                             <size>100 100 20</size>
 
