@@ -11,7 +11,13 @@ from .batch_runner import BatchRunner
 from .csv_logger import CSVLogger
 from .parameter_sweep import ParameterSweep
 from .scenario_manager import ScenarioManager
-from .scenarios import *
+from .scenarios import (
+    EasyScenario,
+    ExtremeScenario,
+    HardScenario,
+    MediumScenario,
+    Scenario,
+)
 
 __all__ = [
     "ExperimentRunner",
@@ -20,4 +26,9 @@ __all__ = [
     "CSVLogger",
     "ParameterSweep",
     "ScenarioManager",
+    "Scenario",
+    "EasyScenario",
+    "MediumScenario",
+    "HardScenario",
+    "ExtremeScenario",
 ]

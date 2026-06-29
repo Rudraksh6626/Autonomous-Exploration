@@ -1,4 +1,4 @@
-from terrain.terrain_composer import TerrainComposer
+from .terrain_composer import TerrainComposer
 
 
 class TerrainBuilder:

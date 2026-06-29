@@ -1,6 +1,6 @@
 import numpy as np
 
-from terrain.terrain_generator import TerrainGenerator
+from .terrain_generator import TerrainGenerator
 
 
 class FlatTerrain(TerrainGenerator):

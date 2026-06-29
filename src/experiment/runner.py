@@ -5,7 +5,7 @@ Manages ROS2 simulation lifecycle and metrics collection.
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict
 
 
 class ExperimentFramework:

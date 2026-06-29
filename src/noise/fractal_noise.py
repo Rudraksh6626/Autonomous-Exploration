@@ -1,7 +1,7 @@
 import numpy as np
 from noise import pnoise2
 
-from noise.base_noise import BaseNoiseGenerator
+from .base_noise import BaseNoiseGenerator
 
 
 class FractalNoiseGenerator(BaseNoiseGenerator):
